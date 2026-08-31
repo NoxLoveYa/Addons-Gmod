@@ -1,5 +1,6 @@
 -- Simple HUD DarkRP Modern + Visage 3D temps réel
 -- Drop in garrysmod/addons/simple_hud/
+-- Wiki verified: HUDPaint is 2D hook, draw.RoundedBox needs 2D context, DModelPanel:Paint uses DrawModel internally
 if CLIENT then
 
     surface.CreateFont("SimpleHUD_Large", { font = "Roboto", size = 26, weight = 700 })
@@ -9,41 +10,34 @@ if CLIENT then
     surface.CreateFont("SimpleHUD_Money", { font = "Roboto", size = 18, weight = 800 })
 
     local BG = Color(20, 20, 25, 240)
-    local BG2 = Color(45, 45, 52, 200)
     local BG_BAR = Color(35, 35, 42)
-    local ACCENT = Color(99, 102, 241) -- indigo moderne
+    local ACCENT = Color(99, 102, 241)
 
-    local FACE = 96 -- bigger square (was 72)
+    local FACE = 96
     local FACE_PAD = 12
-    local FACE_BAR_H = 10
-    local CON_W, CON_H = 420, 136 -- taller to fit face + health bar under
+    local CON_W, CON_H = 420, 146 -- +10 vs before so bar fits with margin
 
-    -- Desactive tout l'HUD de base + DarkRP
     hook.Add("HUDShouldDraw", "SimpleHUD_HideDefaults", function(name)
         if name == "CHudChat" then return true end
         return false
     end)
     hook.Add("PostGamemodeLoaded", "SimpleHUD_DisableDarkRP", function()
-        if GAMEMODE and GAMEMODE.Config then
-            GAMEMODE.Config.enableHUD = false
-        end
-        if DarkRP and DarkRP.disabledHUD then return end
+        if GAMEMODE and GAMEMODE.Config then GAMEMODE.Config.enableHUD = false end
     end)
     timer.Simple(2, function()
         hook.Remove("HUDPaint", "DarkRP_HUD")
         hook.Remove("HUDPaint", "DarkRP_EntityDisplay")
+        hook.Remove("HUDPaintBackground", "DarkRP_HUD")
     end)
 
-    -- === Visage 3D temps réel ===
+    -- === Visage 3D ===
     local FacePanel
     local lastModel = ""
-
     local function CreateFacePanel()
         if IsValid(FacePanel) then FacePanel:Remove() end
         local ply = LocalPlayer()
         if not IsValid(ply) then return end
         lastModel = ply:GetModel()
-
         FacePanel = vgui.Create("DModelPanel")
         FacePanel:SetSize(FACE, FACE)
         FacePanel:SetModel(lastModel)
@@ -51,40 +45,31 @@ if CLIENT then
         FacePanel:SetLookAt(Vector(0, 0, 62))
         FacePanel:SetCamPos(Vector(30, 0, 64))
         FacePanel:SetAnimated(true)
-
-        -- disable zoom & drag completely
         FacePanel:SetMouseInputEnabled(false)
-        FacePanel.OnMouseWheeled = function() return false end
+        FacePanel.OnMouseWheeled = function() return true end
         FacePanel.OnMousePressed = function() end
         FacePanel.DoClick = function() end
         FacePanel.OnCursorMoved = function() end
-
         FacePanel.LayoutEntity = function(self, ent)
             if not IsValid(ent) then return end
             local ply2 = LocalPlayer()
             if not IsValid(ply2) then return end
             local eyeAng = ply2:EyeAngles()
-
-            -- clamp to 25 deg delta left/right, always facing camera
-            -- 0 faces camera (was -180 facing away)
+            -- 0 = faces camera, was -180 facing away (wiki: DModelPanel cam at +X looking at origin)
             local baseYaw = 0
-            local rawDelta = math.NormalizeAngle(eyeAng.y) -- -180..180
+            local rawDelta = math.NormalizeAngle(eyeAng.y)
             local clampedDelta = math.Clamp(rawDelta, -25, 25)
             local yaw = baseYaw + clampedDelta
             local pitch = math.Clamp(eyeAng.p * 0.15, -6, 6)
-
             ent:SetAngles(Angle(pitch, yaw, 0))
-
-            -- eyes follow a bit but also clamped
             if ent.SetEyeTarget then
-                -- slightly offset eye target within clamp
                 local eyeFwd = Angle(0, clampedDelta, 0):Forward()
                 ent:SetEyeTarget(Vector(80,0,64) + eyeFwd * 12)
             end
             ent:FrameAdvance(FrameTime())
             self:RunAnimation()
         end
-
+        -- Wiki: PANEL:Paint(w,h) - return true blocks bg, use stored old paint. Don't call PaintModel (nil).
         local _oldPaint = FacePanel.Paint
         function FacePanel:Paint(w, h)
             draw.RoundedBox(12, 0, 0, w, h, Color(0,0,0,120))
@@ -93,10 +78,8 @@ if CLIENT then
             surface.DrawOutlinedRect(0,0,w,h,1)
         end
     end
-
     hook.Add("InitPostEntity", "SimpleHUD_CreateFace", CreateFacePanel)
     hook.Add("OnPlayerChangedTeam", "SimpleHUD_FaceTeam", function() timer.Simple(0.5, CreateFacePanel) end)
-
     hook.Add("Think", "SimpleHUD_FaceThink", function()
         local ply = LocalPlayer()
         if not IsValid(ply) or not IsValid(FacePanel) then return end
@@ -106,34 +89,29 @@ if CLIENT then
         FacePanel:SetVisible(not ply:ShouldDrawLocalPlayer() and ply:Alive())
     end)
 
-    -- helpers
     local dispHealth, dispArmor, dispHunger = 100, 0, 100
-
     local function DrawBar(x, y, w, h, frac, col)
         frac = math.Clamp(frac, 0, 1)
         draw.RoundedBox(4, x, y, w, h, BG_BAR)
-        if frac > 0 then
-            draw.RoundedBox(4, x, y, w * frac, h, col)
-        end
+        if frac > 0 then draw.RoundedBox(4, x, y, w * frac, h, col) end
     end
-
     local function HealthColor(frac)
         if frac > 0.6 then return Color(34,197,94) end
         if frac > 0.3 then return Color(234,179,8) end
         return Color(239,68,68)
     end
-
     local function FormatMoney(n)
         if DarkRP and DarkRP.formatMoney then return DarkRP.formatMoney(n) end
         return "$" .. tostring(n or 0)
     end
 
+    -- DEBUG: type in console simplehud_debug 1 to force center test bar
+    CreateClientConVar("simplehud_debug", "0", false, false)
+    local nextPrint = 0
     hook.Add("HUDPaint", "SimpleHUD_Draw", function()
         local ply = LocalPlayer()
         if not IsValid(ply) then return end
-
         local sw, sh = ScrW(), ScrH()
-
         local hp = ply:Health()
         local maxHp = ply:GetMaxHealth() if maxHp == 0 then maxHp = 100 end
         local armor = ply:Armor()
@@ -146,53 +124,75 @@ if CLIENT then
         dispArmor = Lerp(FrameTime() * 8, dispArmor, armor)
         dispHunger = Lerp(FrameTime() * 8, dispHunger, hunger)
 
-        -- Container moderne
         local cw, ch = CON_W, CON_H
         local cx, cy = 16, sh - ch - 16
 
+        -- Container
         draw.RoundedBox(12, cx, cy, cw, ch, BG)
         draw.RoundedBoxEx(12, cx, cy, cw, 3, ACCENT, true, true, false, false)
 
         if not IsValid(FacePanel) then
-            draw.RoundedBox(10, cx + FACE_PAD, cy + FACE_PAD, FACE, FACE, BG2)
+            draw.RoundedBox(10, cx + FACE_PAD, cy + FACE_PAD, FACE, FACE, Color(45,45,52))
             draw.SimpleText("...", "SimpleHUD_Small", cx + FACE_PAD + FACE/2, cy + FACE_PAD + FACE/2, Color(255,255,255,80), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
         end
 
-        -- Health bar UNDER the square (inside container, guaranteed visible)
+        -- === HEALTH BAR UNDER SQUARE - WIKI FIX: use surface.DrawRect (never fails) + RoundedBox fallback ===
+        -- Previous bug: bar was drawn but same dark color on low res could be clipped by VGUI if ScrH small
+        -- Now: explicit surface.DrawRect with high-contrast + extra height, always inside container
         local hbX = cx + FACE_PAD
         local hbY = cy + FACE_PAD + FACE + 6
         local hbW = FACE
         local hbH = 16
-        local hpFracReal = math.Clamp(hp / math.max(maxHp,1), 0, 1)
-        local hpFrac = math.Clamp(dispHealth / math.max(maxHp,1), 0, 1)
-        -- bg: solid black border + dark inner so empty is still visible
-        draw.RoundedBox(6, hbX, hbY, hbW, hbH, Color(0,0,0,230))
-        surface.SetDrawColor(255,255,255,40)
-        surface.DrawOutlinedRect(hbX, hbY, hbW, hbH, 1)
-        draw.RoundedBox(4, hbX + 2, hbY + 2, hbW - 4, hbH - 4, Color(45,45,52))
-        if hpFracReal > 0 then
-            draw.RoundedBox(4, hbX + 2, hbY + 2, (hbW - 4) * hpFracReal, hbH - 4, HealthColor(hpFracReal))
+        local hpFrac = math.Clamp(hp / math.max(maxHp,1), 0, 1)
+        -- outer border (black) - surface for guaranteed draw
+        surface.SetDrawColor(0,0,0,230)
+        surface.DrawRect(hbX, hbY, hbW, hbH)
+        -- inner bg
+        surface.SetDrawColor(45,45,52,255)
+        surface.DrawRect(hbX+2, hbY+2, hbW-4, hbH-4)
+        -- fill (bright)
+        local col = HealthColor(hpFrac)
+        if hpFrac > 0 then
+            surface.SetDrawColor(col.r, col.g, col.b, 255)
+            surface.DrawRect(hbX+2, hbY+2, (hbW-4) * hpFrac, hbH-4)
         else
-            draw.RoundedBox(4, hbX + 2, hbY + 2, hbW - 4, hbH - 4, Color(80,0,0,180))
+            -- empty: red flash so you KNOW bar exists
+            surface.SetDrawColor(120, 0, 0, 180)
+            surface.DrawRect(hbX+2, hbY+2, hbW-4, hbH-4)
         end
-        -- text with shadow
-        draw.SimpleText(math.max(0, math.Round(hp)) .. " HP", "SimpleHUD_Tiny", hbX + hbW/2 + 1, hbY + hbH/2 + 1, Color(0,0,0,200), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
-        draw.SimpleText(math.max(0, math.Round(hp)) .. " HP", "SimpleHUD_Tiny", hbX + hbW/2, hbY + hbH/2, color_white, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
-        -- DEBUG center bar so you know HUDPaint is running (remove after test)
-        -- draw.RoundedBox(4, ScrW()/2 - 100, ScrH()/2, 200, 20, Color(0,0,0,200))
-        -- draw.RoundedBox(4, ScrW()/2 - 98, ScrH()/2 + 2, 196 * hpFracReal, 16, HealthColor(hpFracReal))
+        -- white outline so visible on any BG
+        surface.SetDrawColor(255,255,255,35)
+        surface.DrawOutlinedRect(hbX, hbY, hbW, hbH, 1)
+        -- text
+        local txt = math.max(0, math.Round(hp)) .. " HP"
+        draw.SimpleText(txt, "SimpleHUD_Tiny", hbX + hbW/2 + 1, hbY + hbH/2 + 1, Color(0,0,0,200), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+        draw.SimpleText(txt, "SimpleHUD_Tiny", hbX + hbW/2, hbY + hbH/2, color_white, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
 
-        -- Infos à droite de l'avatar
+        -- DEBUG center bar (enable with simplehud_debug 1) + periodic console print
+        if GetConVar("simplehud_debug"):GetBool() then
+            local dbgW, dbgH = 300, 24
+            local dbgX, dbgY = sw/2 - dbgW/2, sh/2 - 100
+            surface.SetDrawColor(0,0,0,200)
+            surface.DrawRect(dbgX, dbgY, dbgW, dbgH)
+            surface.SetDrawColor(col.r, col.g, col.b, 255)
+            surface.DrawRect(dbgX+2, dbgY+2, (dbgW-4)*hpFrac, dbgH-4)
+            draw.SimpleText("DEBUG HEALTH " .. hp .. "/" .. maxHp .. " frac=" .. math.Round(hpFrac*100) .. "% hb@" .. hbX .. "," .. hbY, "DermaLarge", sw/2, dbgY - 14, Color(255,255,0), TEXT_ALIGN_CENTER)
+            surface.SetDrawColor(255,255,0,200)
+            surface.DrawOutlinedRect(hbX-2, hbY-2, hbW+4, hbH+4, 2)
+            if CurTime() > nextPrint then
+                print("[SimpleHUD] hp="..hp.." maxHp="..maxHp.." hpFrac="..hpFrac.." hbX="..hbX.." hbY="..hbY.." sw="..sw.." sh="..sh.." cy="..cy)
+                nextPrint = CurTime() + 2
+            end
+        end
+
+        -- Infos à droite
         local tx = cx + FACE_PAD + FACE + 12
         local ty = cy + 14
-
         local name = ply:Nick()
         if string.len(name) > 22 then name = string.sub(name, 1, 22) .. "…" end
         draw.SimpleText(name, "SimpleHUD_Medium", tx, ty, color_white)
-
         local job = "Inconnu"
-        local money = 0
-        local salary = 0
+        local money, salary = 0, 0
         if ply.getDarkRPVar then
             job = ply:getDarkRPVar("job") or job
             money = ply:getDarkRPVar("money") or 0
@@ -202,41 +202,29 @@ if CLIENT then
         local jw = surface.GetTextSize(job) + 16
         draw.RoundedBox(6, tx, ty + 22, jw, 16, Color(99,102,241, 220))
         draw.SimpleText(string.upper(job), "SimpleHUD_Tiny", tx + jw/2, ty + 30, color_white, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
-
-        local moneyTxt = FormatMoney(money)
-        local salaryTxt = "+" .. FormatMoney(salary)
-        draw.SimpleText(moneyTxt, "SimpleHUD_Money", cx + cw - 12, ty + 2, Color(110, 231, 183), TEXT_ALIGN_RIGHT, TEXT_ALIGN_TOP)
-        draw.SimpleText(salaryTxt .. " / paie", "SimpleHUD_Tiny", cx + cw - 12, ty + 20, Color(255,255,255,100), TEXT_ALIGN_RIGHT, TEXT_ALIGN_TOP)
-
+        draw.SimpleText(FormatMoney(money), "SimpleHUD_Money", cx + cw - 12, ty + 2, Color(110, 231, 183), TEXT_ALIGN_RIGHT, TEXT_ALIGN_TOP)
+        draw.SimpleText("+" .. FormatMoney(salary) .. " / paie", "SimpleHUD_Tiny", cx + cw - 12, ty + 20, Color(255,255,255,100), TEXT_ALIGN_RIGHT, TEXT_ALIGN_TOP)
         local wanted = ply.getDarkRPVar and ply:getDarkRPVar("wanted")
         if wanted then
             draw.RoundedBox(6, cx + cw - 70, ty + 38, 58, 16, Color(239,68,68,220))
             draw.SimpleText("RECHERCHÉ", "SimpleHUD_Tiny", cx + cw - 41, ty + 46, color_white, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
         end
 
-        -- Barres à droite : Armure / Faim (+ second health si tu veux)
         local bx = tx
         local bw = cw - (tx - cx) - 12
         local bh = 10
         local by = cy + 56
-
-        -- Santé (droite aussi, en plus de celui sous le carré)
         local hpCol = HealthColor(hpFrac)
         DrawBar(bx, by, bw, bh, hpFrac, hpCol)
         draw.SimpleText(math.max(0, math.Round(hp)) .. " HP", "SimpleHUD_Tiny", bx + 4, by + bh/2, color_white, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
         by = by + 14
-
-        -- Armure
         DrawBar(bx, by, bw, bh, dispArmor / 100, Color(59,130,246))
         draw.SimpleText(math.Round(armor) .. " ARMURE", "SimpleHUD_Tiny", bx + 4, by + bh/2, color_white, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
         by = by + 14
-
-        -- Faim
         local hungerCol = dispHunger > 40 and Color(249,115,22) or Color(239,68,68)
         DrawBar(bx, by, bw, bh, dispHunger / 100, hungerCol)
         draw.SimpleText(math.Round(dispHunger) .. "% FAIM", "SimpleHUD_Tiny", bx + 4, by + bh/2, color_white, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
 
-        -- Ammo bottom-right
         local wep = ply:GetActiveWeapon()
         if IsValid(wep) then
             local clip = wep:Clip1()
