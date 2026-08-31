@@ -66,8 +66,8 @@ if CLIENT then
             local eyeAng = ply2:EyeAngles()
 
             -- clamp to 25 deg delta left/right, always facing camera
-            -- base yaw -90 faces camera, -180 = 90deg left
-            local baseYaw = -180
+            -- 0 faces camera (was -180 facing away)
+            local baseYaw = 0
             local rawDelta = math.NormalizeAngle(eyeAng.y) -- -180..180
             local clampedDelta = math.Clamp(rawDelta, -25, 25)
             local yaw = baseYaw + clampedDelta
