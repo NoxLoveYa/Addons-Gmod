@@ -1,13 +1,13 @@
--- Simple HUD v8 - try ALL 2D hooks + force GAMEMODE hook
+-- Simple HUD DarkRP Modern + Visage 3D temps réel | final DrawOverlay
 if CLIENT then
-    print("[SimpleHUD] file loaded v8 - all hooks")
-
     surface.CreateFont("SimpleHUD_Large", { font = "Roboto", size = 26, weight = 700 })
     surface.CreateFont("SimpleHUD_Medium", { font = "Roboto", size = 20, weight = 700 })
     surface.CreateFont("SimpleHUD_Small", { font = "Roboto", size = 16, weight = 600 })
     surface.CreateFont("SimpleHUD_Tiny", { font = "Roboto", size = 14, weight = 600 })
+    surface.CreateFont("SimpleHUD_Money", { font = "Roboto", size = 18, weight = 800 })
 
     local BG = Color(20, 20, 25, 240)
+    local BG_BAR = Color(35, 35, 42)
     local ACCENT = Color(99, 102, 241)
     local FACE = 96
     local FACE_PAD = 12
@@ -18,6 +18,7 @@ if CLIENT then
         return false
     end)
 
+    -- Face 3D - VGUI renders at PostRenderVGUI which is AFTER DrawOverlay, so it stays on top
     local FacePanel
     local lastModel = ""
     local function CreateFacePanel()
@@ -30,32 +31,50 @@ if CLIENT then
         FacePanel:SetModel(lastModel)
         FacePanel:SetFOV(44)
         FacePanel:SetLookAt(Vector(0, 0, 62))
+        FacePanel.curYaw = 0
         FacePanel:SetCamPos(Vector(30, 0, 64))
         FacePanel:SetAnimated(true)
         FacePanel:SetMouseInputEnabled(false)
         FacePanel.OnMouseWheeled = function() return true end
+        FacePanel.OnMousePressed = function() end
+        FacePanel.DoClick = function() end
+        FacePanel.OnCursorMoved = function() end
         FacePanel.LayoutEntity = function(self, ent)
             if not IsValid(ent) then return end
             local ply2 = LocalPlayer()
             if not IsValid(ply2) then return end
             local eyeAng = ply2:EyeAngles()
-            local baseYaw = 0
-            local rawDelta = math.NormalizeAngle(eyeAng.y)
-            local clampedDelta = math.Clamp(rawDelta, -25, 25)
-            local yaw = baseYaw + clampedDelta
-            local pitch = math.Clamp(eyeAng.p * 0.15, -6, 6)
-            ent:SetAngles(Angle(pitch, yaw, 0))
+            -- unclamped: entity follows view directly
+            local targetYaw = eyeAng.y
+            local pitch = math.Clamp(eyeAng.p * 0.4, -15, 15)
+            ent:SetAngles(Angle(pitch, targetYaw, 0))
             if ent.SetEyeTarget then
-                local eyeFwd = Angle(0, clampedDelta, 0):Forward()
-                ent:SetEyeTarget(Vector(80,0,64) + eyeFwd * 12)
+                ent:SetEyeTarget(ply2:EyePos() + eyeAng:Forward() * 100)
             end
+            -- camera lags behind and orbits to stay in front of face
+            self.curYaw = self.curYaw or targetYaw
+            -- LerpAngle for smooth lag ( ~0.08 = slight lag, increase 0.15 for faster)
+            local curAng = Angle(0, self.curYaw, 0)
+            local tgtAng = Angle(0, targetYaw, 0)
+            self.curYaw = LerpAngle(FrameTime() * 5, curAng, tgtAng).y
+            local rad = math.rad(self.curYaw)
+            local dist = 32
+            local camPos = Vector(math.cos(rad) * dist, math.sin(rad) * dist, 64 + pitch * 0.2)
+            self:SetCamPos(camPos)
+            self:SetLookAt(Vector(0, 0, 62 + pitch * 0.1))
             ent:FrameAdvance(FrameTime())
             self:RunAnimation()
         end
         local _old = FacePanel.Paint
-        function FacePanel:Paint(w,h) pcall(function() draw.RoundedBox(12,0,0,w,h,Color(0,0,0,120)); _old(self,w,h); surface.SetDrawColor(255,255,255,18); surface.DrawOutlinedRect(0,0,w,h,1) end) end
+        function FacePanel:Paint(w, h)
+            draw.RoundedBox(12, 0, 0, w, h, Color(0,0,0,120))
+            _old(self, w, h)
+            surface.SetDrawColor(255,255,255,18)
+            surface.DrawOutlinedRect(0,0,w,h,1)
+        end
     end
     hook.Add("InitPostEntity", "SimpleHUD_CreateFace", CreateFacePanel)
+    hook.Add("OnPlayerChangedTeam", "SimpleHUD_FaceTeam", function() timer.Simple(0.5, CreateFacePanel) end)
     hook.Add("Think", "SimpleHUD_FaceThink", function()
         local ply = LocalPlayer()
         if not IsValid(ply) or not IsValid(FacePanel) then return end
@@ -71,100 +90,120 @@ if CLIENT then
         if frac > 0.3 then return Color(234,179,8) end
         return Color(239,68,68)
     end
+    local function FormatMoney(n)
+        if DarkRP and DarkRP.formatMoney then return DarkRP.formatMoney(n) end
+        return "$" .. tostring(n or 0)
+    end
 
-    local counts = {HUDPaint=0, HUDPaintBackground=0, PostDrawHUD=0, DrawOverlay=0, PostRenderVGUI=0, PreDrawHUD=0}
-    local function MakePainter(name)
-        return function()
-            counts[name] = counts[name] + 1
-            local sw, sh = ScrW(), ScrH()
-            -- top proof for each hook - different Y so you know which fired
-            local yMap = {HUDPaint=20, HUDPaintBackground=48, PostDrawHUD=76, DrawOverlay=104, PostRenderVGUI=132, PreDrawHUD=160}
-            local y = yMap[name] or 20
-            surface.SetDrawColor(255,0,0,255)
-            surface.DrawRect(sw/2 - 160, y, 320, 22)
-            draw.SimpleText(name .. " ACTIVE v8 " .. counts[name], "SimpleHUD_Small", sw/2, y+11, color_white, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+    local function DrawHUD()
+        local ply = LocalPlayer()
+        if not IsValid(ply) then return end
+        local sw, sh = ScrW(), ScrH()
+        local hp = ply:Health()
+        local maxHp = ply:GetMaxHealth() if maxHp == 0 then maxHp = 100 end
+        local armor = ply:Armor()
+        local hpFrac = math.Clamp(hp / maxHp, 0, 1)
+        local col = HealthColor(hpFrac)
 
-            -- also draw center health bar if HUDPaint
-            if name == "HUDPaint" or name == "DrawOverlay" then
-                local ply = LocalPlayer()
-                if not IsValid(ply) then return end
-                local hp = ply:Health()
-                local maxHp = ply:GetMaxHealth() if maxHp==0 then maxHp=100 end
-                local hpFrac = math.Clamp(hp/maxHp,0,1)
-                local col = HealthColor(hpFrac)
-                -- center bar
-                local cW, cH = 320, 22
-                local cX, cY = sw/2 - cW/2, sh/2
-                surface.SetDrawColor(0,0,0,255)
-                surface.DrawRect(cX, cY, cW, cH)
-                surface.SetDrawColor(col.r,col.g,col.b,255)
-                surface.DrawRect(cX+2,cY+2,(cW-4)*hpFrac,cH-4)
-                draw.SimpleText("HP "..hp.."/"..maxHp, "SimpleHUD_Small", cX+cW/2, cY+cH/2, color_white, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
-                -- bottom container + bar
-                local cw,ch = CON_W, CON_H
-                local cx, cy = 16, sh - ch - 16
-                draw.RoundedBox(12, cx, cy, cw, ch, BG)
-                draw.RoundedBoxEx(12, cx, cy, cw, 3, ACCENT, true, true, false, false)
-                local hbX = cx + FACE_PAD
-                local hbY = cy + FACE_PAD + FACE + 6
-                local hbW, hbH = FACE, 16
-                surface.SetDrawColor(0,0,0,255)
-                surface.DrawRect(hbX, hbY, hbW, hbH)
-                surface.SetDrawColor(45,45,52,255)
-                surface.DrawRect(hbX+2,hbY+2,hbW-4,hbH-4)
-                surface.SetDrawColor(col.r,col.g,col.b,255)
-                surface.DrawRect(hbX+2,hbY+2,(hbW-4)*hpFrac,hbH-4)
-                surface.SetDrawColor(255,255,0,255)
-                surface.DrawOutlinedRect(hbX-1,hbY-1,hbW+2,hbH+2,2)
-                draw.SimpleText(hp.." HP", "SimpleHUD_Tiny", hbX+hbW/2, hbY+hbH/2, color_white, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+        local cw, ch = CON_W, CON_H
+        local cx, cy = 16, sh - ch - 16
+
+        draw.RoundedBox(12, cx, cy, cw, ch, BG)
+        draw.RoundedBoxEx(12, cx, cy, cw, 3, ACCENT, true, true, false, false)
+
+        if not IsValid(FacePanel) then
+            draw.RoundedBox(10, cx + FACE_PAD, cy + FACE_PAD, FACE, FACE, Color(45,45,52))
+        end
+
+        -- health bar under square
+        local hbX = cx + FACE_PAD
+        local hbY = cy + FACE_PAD + FACE + 6
+        local hbW, hbH = FACE, 16
+        surface.SetDrawColor(0,0,0,255)
+        surface.DrawRect(hbX, hbY, hbW, hbH)
+        surface.SetDrawColor(45,45,52,255)
+        surface.DrawRect(hbX+2, hbY+2, hbW-4, hbH-4)
+        surface.SetDrawColor(col.r, col.g, col.b, 255)
+        if hpFrac > 0 then
+            surface.DrawRect(hbX+2, hbY+2, (hbW-4)*hpFrac, hbH-4)
+        end
+        surface.SetDrawColor(255,255,255,40)
+        surface.DrawOutlinedRect(hbX, hbY, hbW, hbH, 1)
+        draw.SimpleText(math.Round(hp) .. " HP", "SimpleHUD_Tiny", hbX + hbW/2 +1, hbY + hbH/2+1, Color(0,0,0,200), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+        draw.SimpleText(math.Round(hp) .. " HP", "SimpleHUD_Tiny", hbX + hbW/2, hbY + hbH/2, color_white, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+
+        -- infos à droite
+        local tx = cx + FACE_PAD + FACE + 12
+        local ty = cy + 14
+        local name = ply:Nick()
+        if string.len(name) > 22 then name = string.sub(name, 1, 22) .. "…" end
+        draw.SimpleText(name, "SimpleHUD_Medium", tx, ty, color_white)
+
+        local job = "Inconnu"
+        local money, salary = 0, 0
+        if ply.getDarkRPVar then
+            job = ply:getDarkRPVar("job") or job
+            money = ply:getDarkRPVar("money") or 0
+            salary = ply:getDarkRPVar("salary") or 0
+        end
+        surface.SetFont("SimpleHUD_Tiny")
+        local jw = surface.GetTextSize(job) + 16
+        draw.RoundedBox(6, tx, ty + 22, jw, 16, Color(99,102,241,220))
+        draw.SimpleText(string.upper(job), "SimpleHUD_Tiny", tx + jw/2, ty + 30, color_white, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+        draw.SimpleText(FormatMoney(money), "SimpleHUD_Money", cx + cw - 12, ty + 2, Color(110,231,183), TEXT_ALIGN_RIGHT, TEXT_ALIGN_TOP)
+        draw.SimpleText("+" .. FormatMoney(salary) .. " / paie", "SimpleHUD_Tiny", cx + cw - 12, ty + 20, Color(255,255,255,100), TEXT_ALIGN_RIGHT, TEXT_ALIGN_TOP)
+
+        if ply.getDarkRPVar and ply:getDarkRPVar("wanted") then
+            draw.RoundedBox(6, cx + cw - 70, ty + 38, 58, 16, Color(239,68,68,220))
+            draw.SimpleText("RECHERCHÉ", "SimpleHUD_Tiny", cx + cw - 41, ty + 46, color_white, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+        end
+
+        -- bars à droite
+        local bw = cw - (tx - cx) - 12
+        local by = cy + 56
+        -- health right
+        draw.RoundedBox(4, tx, by, bw, 10, BG_BAR)
+        draw.RoundedBox(4, tx, by, bw*hpFrac, 10, col)
+        draw.SimpleText(math.Round(hp) .. " HP", "SimpleHUD_Tiny", tx+4, by+5, color_white, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+        by = by + 14
+        -- armor
+        local armorFrac = math.Clamp(armor/100,0,1)
+        draw.RoundedBox(4, tx, by, bw, 10, BG_BAR)
+        draw.RoundedBox(4, tx, by, bw*armorFrac, 10, Color(59,130,246))
+        draw.SimpleText(math.Round(armor) .. " ARMURE", "SimpleHUD_Tiny", tx+4, by+5, color_white, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+        by = by + 14
+        -- hunger
+        local hunger = 100
+        if ply.getDarkRPVar then local e = ply:getDarkRPVar("Energy") if e~=nil then hunger=e end end
+        local hungerFrac = hunger/100
+        local hungerCol = hunger > 40 and Color(249,115,22) or Color(239,68,68)
+        draw.RoundedBox(4, tx, by, bw, 10, BG_BAR)
+        draw.RoundedBox(4, tx, by, bw*hungerFrac, 10, hungerCol)
+        draw.SimpleText(math.Round(hunger) .. "% FAIM", "SimpleHUD_Tiny", tx+4, by+5, color_white, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+
+        -- ammo bottom-right
+        local wep = ply:GetActiveWeapon()
+        if IsValid(wep) then
+            local clip = wep:Clip1()
+            local reserve = ply:GetAmmoCount(wep:GetPrimaryAmmoType())
+            if clip ~= -1 then
+                local ammoText = clip .. " / " .. reserve
+                surface.SetFont("SimpleHUD_Large")
+                local tw = surface.GetTextSize(ammoText)
+                local bw2 = math.max(140, tw + 28)
+                local bh2 = 36
+                local ax = sw - 16 - bw2
+                local ay = sh - 16 - bh2
+                draw.RoundedBox(10, ax, ay, bw2, bh2, BG)
+                draw.RoundedBoxEx(10, ax, ay, bw2, 3, Color(255,255,255,12), true, true, false, false)
+                draw.SimpleText(ammoText, "SimpleHUD_Large", ax + bw2/2, ay + bh2/2 +1, color_white, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+                local wname = wep:GetPrintName()
+                if wname and wname ~= "" then
+                    draw.SimpleText(string.upper(wname), "SimpleHUD_Tiny", ax + bw2/2, ay - 6, Color(255,255,255,140), TEXT_ALIGN_CENTER, TEXT_ALIGN_BOTTOM)
+                end
             end
         end
     end
 
-    -- Hook ALL 2D hooks - wiki list
-    hook.Add("HUDPaint", "SimpleHUD_Draw", MakePainter("HUDPaint"))
-    hook.Add("HUDPaintBackground", "SimpleHUD_Draw_BG", MakePainter("HUDPaintBackground"))
-    hook.Add("PostDrawHUD", "SimpleHUD_Draw_PostHUD", MakePainter("PostDrawHUD"))
-    hook.Add("DrawOverlay", "SimpleHUD_Draw_Overlay", MakePainter("DrawOverlay"))
-    hook.Add("PostRenderVGUI", "SimpleHUD_Draw_PostVGUI", MakePainter("PostRenderVGUI"))
-    hook.Add("PreDrawHUD", "SimpleHUD_Draw_PreHUD", MakePainter("PreDrawHUD"))
-
-    -- Force GAMEMODE to call hook.Run if it was blocking (common fix)
-    timer.Simple(2, function()
-        if GAMEMODE then
-            print("[SimpleHUD] GAMEMODE=" .. (GAMEMODE.Name or "unknown") .. " - patching HUDPaint to force hook.Run")
-            local oldPaint = GAMEMODE.HUDPaint
-            local oldBG = GAMEMODE.HUDPaintBackground
-            function GAMEMODE:HUDPaint()
-                if oldPaint then pcall(oldPaint, self) end
-                hook.Run("HUDPaint")
-            end
-            function GAMEMODE:HUDPaintBackground()
-                if oldBG then pcall(oldBG, self) end
-                hook.Run("HUDPaintBackground")
-            end
-            print("[SimpleHUD] patched GAMEMODE HUDPaint")
-        end
-        -- print counts after 4s
-        timer.Simple(2, function()
-            print("[SimpleHUD v8 counts] " .. table.ToString(counts))
-            for k,v in pairs(counts) do if v>0 then print("[SimpleHUD] hook " .. k .. " fired " .. v .. " times") end end
-            if counts.HUDPaint==0 and counts.DrawOverlay==0 then
-                print("[SimpleHUD] WARNING: no 2D hook fired - gamemode is not calling them. Using cam.Start2D fallback in Think")
-                hook.Add("Think", "SimpleHUD_FallbackDraw", function()
-                    -- cam.Start2D works anywhere
-                    cam.Start2D()
-                        local ok, err = pcall(MakePainter("HUDPaint"))
-                        if not ok then print(err) end
-                    cam.End2D()
-                    -- only once per frame is okay but we do it in Think so it will spam - limit
-                end)
-            end
-        end)
-    end)
-
-    concommand.Add("simplehud_test", function()
-        local ply = LocalPlayer()
-        print("[SimpleHUD test v8] HP="..ply:Health().." counts="..table.ToString(counts).." GAMEMODE="..(GAMEMODE and GAMEMODE.Name or "nil"))
-    end)
+    hook.Add("DrawOverlay", "SimpleHUD_Draw", DrawHUD)
 end
