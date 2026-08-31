@@ -66,8 +66,8 @@ if CLIENT then
             local eyeAng = ply2:EyeAngles()
 
             -- clamp to 25 deg delta left/right, always facing camera
-            -- base yaw -90 faces camera (cam at +X looking to origin)
-            local baseYaw = -90
+            -- base yaw -90 faces camera, -180 = 90deg left
+            local baseYaw = -180
             local rawDelta = math.NormalizeAngle(eyeAng.y) -- -180..180
             local clampedDelta = math.Clamp(rawDelta, -25, 25)
             local yaw = baseYaw + clampedDelta
@@ -158,21 +158,28 @@ if CLIENT then
             draw.SimpleText("...", "SimpleHUD_Small", cx + FACE_PAD + FACE/2, cy + FACE_PAD + FACE/2, Color(255,255,255,80), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
         end
 
-        -- Health bar UNDER the square (working)
+        -- Health bar UNDER the square (working - fixed)
         local hbX = cx + FACE_PAD
         local hbY = cy + FACE_PAD + FACE + 6
         local hbW = FACE
-        local hbH = FACE_BAR_H
-        local hpFrac = math.Clamp(dispHealth / maxHp, 0, 1)
-        -- bg
-        draw.RoundedBox(4, hbX, hbY, hbW, hbH, BG_BAR)
-        -- fill
-        if hpFrac > 0 then
-            draw.RoundedBox(4, hbX, hbY, hbW * hpFrac, hbH, HealthColor(hpFrac))
+        local hbH = 14 -- bigger so it's visible
+        local hpFracReal = math.Clamp(hp / math.max(maxHp,1), 0, 1)
+        local hpFrac = math.Clamp(dispHealth / math.max(maxHp,1), 0, 1)
+        -- bg (darker + outline so you see it even at 0 hp)
+        draw.RoundedBox(4, hbX, hbY, hbW, hbH, Color(0,0,0,200))
+        draw.RoundedBox(4, hbX + 1, hbY + 1, hbW - 2, hbH - 2, BG_BAR)
+        -- fill (use real hp for instant, dispHealth for smooth - pick real so it never looks stuck)
+        if hpFracReal > 0 then
+            draw.RoundedBox(4, hbX + 1, hbY + 1, (hbW - 2) * hpFracReal, hbH - 2, HealthColor(hpFracReal))
         end
-        -- text + border
+        -- also draw smoothed overlay at 40% opacity so you see lerp working
+        if hpFrac > 0 and math.abs(hpFrac - hpFracReal) > 0.01 then
+            draw.RoundedBox(4, hbX + 1, hbY + 1, (hbW - 2) * hpFrac, hbH - 2, Color(255,255,255,40))
+        end
+        -- text + border - white outline to guarantee visibility
+        draw.SimpleText(math.max(0, math.Round(hp)) .. " HP", "SimpleHUD_Tiny", hbX + hbW/2 + 1, hbY + hbH/2 + 1, Color(0,0,0,180), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
         draw.SimpleText(math.max(0, math.Round(hp)) .. " HP", "SimpleHUD_Tiny", hbX + hbW/2, hbY + hbH/2, color_white, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
-        surface.SetDrawColor(255,255,255,10)
+        surface.SetDrawColor(255,255,255,28)
         surface.DrawOutlinedRect(hbX, hbY, hbW, hbH, 1)
 
         -- Infos à droite de l'avatar
