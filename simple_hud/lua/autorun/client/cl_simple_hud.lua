@@ -13,9 +13,9 @@ if CLIENT then
     local ACCENT    = Color(99, 102, 241)
     local ACCENT2   = Color(129, 140, 248)
 
-    local FACE      = 88
-    local FACE_PAD  = 16
-    local CON_W, CON_H = 480, 158
+    local FACE      = 102
+    local FACE_PAD  = 14
+    local CON_W, CON_H = 490, 162
     local R = 16
 
     hook.Add("HUDShouldDraw", "SimpleHUD_HideDefaults", function(name)
@@ -36,10 +36,13 @@ if CLIENT then
         FacePanel:SetZPos(32767)
         FacePanel:SetSize(FACE, FACE)
         FacePanel:SetModel(lastModel)
-        FacePanel:SetFOV(38)
-        FacePanel:SetLookAt(Vector(0, 0, 63))
+        FacePanel:SetFOV(30)
+        FacePanel:SetLookAt(Vector(0, 0, 64))
         FacePanel.curYaw = 0
-        FacePanel:SetCamPos(Vector(34, 0, 64))
+        FacePanel:SetCamPos(Vector(40, 0, 64))
+        FacePanel:SetAmbientLight(Color(90,90,90))
+        FacePanel:SetDirectionalLight(BOX_FRONT, Color(255,255,255))
+        FacePanel:SetDirectionalLight(BOX_BACK, Color(80,80,90))
         FacePanel:SetAnimated(true)
         FacePanel:SetMouseInputEnabled(false)
         FacePanel.OnMouseWheeled = function() return true end
@@ -63,14 +66,15 @@ if CLIENT then
         end
         local _old = FacePanel.Paint
         function FacePanel:Paint(w, h)
-            -- ombre douce + fond
-            draw.RoundedBox(R, 0, 0, w, h, Color(0,0,0,90))
+            -- fond clair pour contraste + ombre
+            draw.RoundedBox(R, 0, 0, w, h, Color(245,245,248, 255))
+            draw.RoundedBox(R, 1, 1, w-2, h-2, Color(18,18,22, 255))
             _old(self, w, h)
-            -- anneau accent qui pulse si low hp (couleur mise à jour via FacePanel._hpCol)
-            local c = self._hpCol or Color(255,255,255,16)
-            surface.SetDrawColor(c.r, c.g, c.b, 22)
+            -- anneau accent qui pulse si low hp
+            local c = self._hpCol or Color(99,102,241, 22)
+            surface.SetDrawColor(c.r, c.g, c.b, 28)
             surface.DrawOutlinedRect(0,0,w,h,2)
-            surface.SetDrawColor(255,255,255,10)
+            surface.SetDrawColor(255,255,255,14)
             surface.DrawOutlinedRect(1,1,w-2,h-2,1)
         end
     end
