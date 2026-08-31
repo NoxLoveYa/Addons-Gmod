@@ -85,12 +85,12 @@ if CLIENT then
             self:RunAnimation()
         end
 
+        local _oldPaint = FacePanel.Paint
         function FacePanel:Paint(w, h)
             draw.RoundedBox(12, 0, 0, w, h, Color(0,0,0,120))
-            self:PaintModel()
+            _oldPaint(self, w, h)
             surface.SetDrawColor(255,255,255,18)
             surface.DrawOutlinedRect(0,0,w,h,1)
-            return true
         end
     end
 
