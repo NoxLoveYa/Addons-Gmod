@@ -158,29 +158,29 @@ if CLIENT then
             draw.SimpleText("...", "SimpleHUD_Small", cx + FACE_PAD + FACE/2, cy + FACE_PAD + FACE/2, Color(255,255,255,80), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
         end
 
-        -- Health bar UNDER the square (working - fixed)
+        -- Health bar UNDER the square (inside container, guaranteed visible)
         local hbX = cx + FACE_PAD
         local hbY = cy + FACE_PAD + FACE + 6
         local hbW = FACE
-        local hbH = 14 -- bigger so it's visible
+        local hbH = 16
         local hpFracReal = math.Clamp(hp / math.max(maxHp,1), 0, 1)
         local hpFrac = math.Clamp(dispHealth / math.max(maxHp,1), 0, 1)
-        -- bg (darker + outline so you see it even at 0 hp)
-        draw.RoundedBox(4, hbX, hbY, hbW, hbH, Color(0,0,0,200))
-        draw.RoundedBox(4, hbX + 1, hbY + 1, hbW - 2, hbH - 2, BG_BAR)
-        -- fill (use real hp for instant, dispHealth for smooth - pick real so it never looks stuck)
-        if hpFracReal > 0 then
-            draw.RoundedBox(4, hbX + 1, hbY + 1, (hbW - 2) * hpFracReal, hbH - 2, HealthColor(hpFracReal))
-        end
-        -- also draw smoothed overlay at 40% opacity so you see lerp working
-        if hpFrac > 0 and math.abs(hpFrac - hpFracReal) > 0.01 then
-            draw.RoundedBox(4, hbX + 1, hbY + 1, (hbW - 2) * hpFrac, hbH - 2, Color(255,255,255,40))
-        end
-        -- text + border - white outline to guarantee visibility
-        draw.SimpleText(math.max(0, math.Round(hp)) .. " HP", "SimpleHUD_Tiny", hbX + hbW/2 + 1, hbY + hbH/2 + 1, Color(0,0,0,180), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
-        draw.SimpleText(math.max(0, math.Round(hp)) .. " HP", "SimpleHUD_Tiny", hbX + hbW/2, hbY + hbH/2, color_white, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
-        surface.SetDrawColor(255,255,255,28)
+        -- bg: solid black border + dark inner so empty is still visible
+        draw.RoundedBox(6, hbX, hbY, hbW, hbH, Color(0,0,0,230))
+        surface.SetDrawColor(255,255,255,40)
         surface.DrawOutlinedRect(hbX, hbY, hbW, hbH, 1)
+        draw.RoundedBox(4, hbX + 2, hbY + 2, hbW - 4, hbH - 4, Color(45,45,52))
+        if hpFracReal > 0 then
+            draw.RoundedBox(4, hbX + 2, hbY + 2, (hbW - 4) * hpFracReal, hbH - 4, HealthColor(hpFracReal))
+        else
+            draw.RoundedBox(4, hbX + 2, hbY + 2, hbW - 4, hbH - 4, Color(80,0,0,180))
+        end
+        -- text with shadow
+        draw.SimpleText(math.max(0, math.Round(hp)) .. " HP", "SimpleHUD_Tiny", hbX + hbW/2 + 1, hbY + hbH/2 + 1, Color(0,0,0,200), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+        draw.SimpleText(math.max(0, math.Round(hp)) .. " HP", "SimpleHUD_Tiny", hbX + hbW/2, hbY + hbH/2, color_white, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+        -- DEBUG center bar so you know HUDPaint is running (remove after test)
+        -- draw.RoundedBox(4, ScrW()/2 - 100, ScrH()/2, 200, 20, Color(0,0,0,200))
+        -- draw.RoundedBox(4, ScrW()/2 - 98, ScrH()/2 + 2, 196 * hpFracReal, 16, HealthColor(hpFracReal))
 
         -- Infos à droite de l'avatar
         local tx = cx + FACE_PAD + FACE + 12
