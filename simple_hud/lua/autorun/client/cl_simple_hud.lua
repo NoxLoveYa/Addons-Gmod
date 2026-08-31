@@ -13,18 +13,20 @@ if CLIENT then
     local BG_BAR = Color(35, 35, 42)
     local ACCENT = Color(99, 102, 241) -- indigo moderne
 
+    local FACE = 96 -- bigger square (was 72)
+    local FACE_PAD = 12
+    local FACE_BAR_H = 10
+    local CON_W, CON_H = 420, 136 -- taller to fit face + health bar under
+
     -- Desactive tout l'HUD de base + DarkRP
     hook.Add("HUDShouldDraw", "SimpleHUD_HideDefaults", function(name)
-        -- cache tout le HUD source + DarkRP HUD
-        if name == "CHudChat" then return true end -- garder chat
+        if name == "CHudChat" then return true end
         return false
     end)
-    -- DarkRP dessine son HUD via HUDPaint, on l'empêche aussi
     hook.Add("PostGamemodeLoaded", "SimpleHUD_DisableDarkRP", function()
         if GAMEMODE and GAMEMODE.Config then
             GAMEMODE.Config.enableHUD = false
         end
-        -- au cas où DarkRP hook encore
         if DarkRP and DarkRP.disabledHUD then return end
     end)
     timer.Simple(2, function()
@@ -43,36 +45,49 @@ if CLIENT then
         lastModel = ply:GetModel()
 
         FacePanel = vgui.Create("DModelPanel")
-        FacePanel:SetSize(72, 72)
+        FacePanel:SetSize(FACE, FACE)
         FacePanel:SetModel(lastModel)
-        FacePanel:SetFOV(42)
+        FacePanel:SetFOV(44)
         FacePanel:SetLookAt(Vector(0, 0, 62))
-        FacePanel:SetCamPos(Vector(32, 0, 64))
+        FacePanel:SetCamPos(Vector(30, 0, 64))
         FacePanel:SetAnimated(true)
+
+        -- disable zoom & drag completely
+        FacePanel:SetMouseInputEnabled(false)
+        FacePanel.OnMouseWheeled = function() return false end
+        FacePanel.OnMousePressed = function() end
+        FacePanel.DoClick = function() end
+        FacePanel.OnCursorMoved = function() end
+
         FacePanel.LayoutEntity = function(self, ent)
             if not IsValid(ent) then return end
             local ply2 = LocalPlayer()
             if not IsValid(ply2) then return end
-            -- tête suit la vue du joueur (bouge en temps réel)
             local eyeAng = ply2:EyeAngles()
-            -- yaw -> rotation tête, pitch léger
-            local yaw = eyeAng.y - 90
-            local pitch = math.Clamp(eyeAng.p * 0.3, -10, 10)
+
+            -- clamp to 25 deg delta left/right, always facing camera
+            -- base yaw -90 faces camera (cam at +X looking to origin)
+            local baseYaw = -90
+            local rawDelta = math.NormalizeAngle(eyeAng.y) -- -180..180
+            local clampedDelta = math.Clamp(rawDelta, -25, 25)
+            local yaw = baseYaw + clampedDelta
+            local pitch = math.Clamp(eyeAng.p * 0.15, -6, 6)
+
             ent:SetAngles(Angle(pitch, yaw, 0))
-            -- yeux suivent la visée
+
+            -- eyes follow a bit but also clamped
             if ent.SetEyeTarget then
-                ent:SetEyeTarget(ply2:EyePos() + eyeAng:Forward() * 80)
+                -- slightly offset eye target within clamp
+                local eyeFwd = Angle(0, clampedDelta, 0):Forward()
+                ent:SetEyeTarget(Vector(80,0,64) + eyeFwd * 12)
             end
             ent:FrameAdvance(FrameTime())
             self:RunAnimation()
         end
-        -- fond transparent, on dessine HUDPaint derrière
+
         function FacePanel:Paint(w, h)
-            -- petite ombre arrondie derrière le modèle
             draw.RoundedBox(12, 0, 0, w, h, Color(0,0,0,120))
-            -- dessine modèle par dessus (ponytail: carré arrondi simple, stencil circulaire si tu veux parfait cercle)
             self:PaintModel()
-            -- bordure
             surface.SetDrawColor(255,255,255,18)
             surface.DrawOutlinedRect(0,0,w,h,1)
             return true
@@ -82,15 +97,12 @@ if CLIENT then
     hook.Add("InitPostEntity", "SimpleHUD_CreateFace", CreateFacePanel)
     hook.Add("OnPlayerChangedTeam", "SimpleHUD_FaceTeam", function() timer.Simple(0.5, CreateFacePanel) end)
 
-    -- update si changement de modèle
     hook.Add("Think", "SimpleHUD_FaceThink", function()
         local ply = LocalPlayer()
         if not IsValid(ply) or not IsValid(FacePanel) then return end
         if ply:GetModel() ~= lastModel then CreateFacePanel() end
-        -- repositionne selon résolution (ancré au container HUD)
-        local cw, ch = 420, 104
-        local cx, cy = 16, ScrH() - ch - 16
-        FacePanel:SetPos(cx + 10, cy + 16)
+        local cx, cy = 16, ScrH() - CON_H - 16
+        FacePanel:SetPos(cx + FACE_PAD, cy + FACE_PAD)
         FacePanel:SetVisible(not ply:ShouldDrawLocalPlayer() and ply:Alive())
     end)
 
@@ -105,6 +117,12 @@ if CLIENT then
         end
     end
 
+    local function HealthColor(frac)
+        if frac > 0.6 then return Color(34,197,94) end
+        if frac > 0.3 then return Color(234,179,8) end
+        return Color(239,68,68)
+    end
+
     local function FormatMoney(n)
         if DarkRP and DarkRP.formatMoney then return DarkRP.formatMoney(n) end
         return "$" .. tostring(n or 0)
@@ -116,7 +134,6 @@ if CLIENT then
 
         local sw, sh = ScrW(), ScrH()
 
-        -- valeurs lissées
         local hp = ply:Health()
         local maxHp = ply:GetMaxHealth() if maxHp == 0 then maxHp = 100 end
         local armor = ply:Armor()
@@ -129,28 +146,39 @@ if CLIENT then
         dispArmor = Lerp(FrameTime() * 8, dispArmor, armor)
         dispHunger = Lerp(FrameTime() * 8, dispHunger, hunger)
 
-        -- Container moderne bottom-left
-        local cw, ch = 420, 104
+        -- Container moderne
+        local cw, ch = CON_W, CON_H
         local cx, cy = 16, sh - ch - 16
 
-        -- blur + fond (léger blur si dispo)
-        -- Derma_DrawBackgroundBlur n'est pas dispo en HUDPaint, on simule avec fond sombre
         draw.RoundedBox(12, cx, cy, cw, ch, BG)
-        -- petite ligne accent top
         draw.RoundedBoxEx(12, cx, cy, cw, 3, ACCENT, true, true, false, false)
 
-        -- zone avatar : FacePanel est un VGUI par dessus, on laisse l'espace vide ici
-        -- on dessine juste un fond pour l'avatar (au cas où FacePanel pas encore créé)
         if not IsValid(FacePanel) then
-            draw.RoundedBox(10, cx + 10, cy + 16, 72, 72, BG2)
-            draw.SimpleText("...", "SimpleHUD_Small", cx + 46, cy + 52, Color(255,255,255,80), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+            draw.RoundedBox(10, cx + FACE_PAD, cy + FACE_PAD, FACE, FACE, BG2)
+            draw.SimpleText("...", "SimpleHUD_Small", cx + FACE_PAD + FACE/2, cy + FACE_PAD + FACE/2, Color(255,255,255,80), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
         end
 
-        -- Infos texte à droite de l'avatar
-        local tx = cx + 92
+        -- Health bar UNDER the square (working)
+        local hbX = cx + FACE_PAD
+        local hbY = cy + FACE_PAD + FACE + 6
+        local hbW = FACE
+        local hbH = FACE_BAR_H
+        local hpFrac = math.Clamp(dispHealth / maxHp, 0, 1)
+        -- bg
+        draw.RoundedBox(4, hbX, hbY, hbW, hbH, BG_BAR)
+        -- fill
+        if hpFrac > 0 then
+            draw.RoundedBox(4, hbX, hbY, hbW * hpFrac, hbH, HealthColor(hpFrac))
+        end
+        -- text + border
+        draw.SimpleText(math.max(0, math.Round(hp)) .. " HP", "SimpleHUD_Tiny", hbX + hbW/2, hbY + hbH/2, color_white, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+        surface.SetDrawColor(255,255,255,10)
+        surface.DrawOutlinedRect(hbX, hbY, hbW, hbH, 1)
+
+        -- Infos à droite de l'avatar
+        local tx = cx + FACE_PAD + FACE + 12
         local ty = cy + 14
 
-        -- Nom + Job
         local name = ply:Nick()
         if string.len(name) > 22 then name = string.sub(name, 1, 22) .. "…" end
         draw.SimpleText(name, "SimpleHUD_Medium", tx, ty, color_white)
@@ -163,34 +191,30 @@ if CLIENT then
             money = ply:getDarkRPVar("money") or 0
             salary = ply:getDarkRPVar("salary") or 0
         end
-        -- job badge
         surface.SetFont("SimpleHUD_Tiny")
         local jw = surface.GetTextSize(job) + 16
         draw.RoundedBox(6, tx, ty + 22, jw, 16, Color(99,102,241, 220))
         draw.SimpleText(string.upper(job), "SimpleHUD_Tiny", tx + jw/2, ty + 30, color_white, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
 
-        -- Argent à droite du container
         local moneyTxt = FormatMoney(money)
         local salaryTxt = "+" .. FormatMoney(salary)
         draw.SimpleText(moneyTxt, "SimpleHUD_Money", cx + cw - 12, ty + 2, Color(110, 231, 183), TEXT_ALIGN_RIGHT, TEXT_ALIGN_TOP)
         draw.SimpleText(salaryTxt .. " / paie", "SimpleHUD_Tiny", cx + cw - 12, ty + 20, Color(255,255,255,100), TEXT_ALIGN_RIGHT, TEXT_ALIGN_TOP)
 
-        -- wanted
         local wanted = ply.getDarkRPVar and ply:getDarkRPVar("wanted")
         if wanted then
             draw.RoundedBox(6, cx + cw - 70, ty + 38, 58, 16, Color(239,68,68,220))
             draw.SimpleText("RECHERCHÉ", "SimpleHUD_Tiny", cx + cw - 41, ty + 46, color_white, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
         end
 
-        -- Barres : Vie / Armure / Faim
+        -- Barres à droite : Armure / Faim (+ second health si tu veux)
         local bx = tx
-        local bw = cw - (tx - cx) - 12 -- ~316
+        local bw = cw - (tx - cx) - 12
         local bh = 10
-        local by = cy + 52
+        local by = cy + 56
 
-        -- Vie
-        local hpFrac = dispHealth / maxHp
-        local hpCol = hpFrac > 0.6 and Color(34,197,94) or hpFrac > 0.3 and Color(234,179,8) or Color(239,68,68)
+        -- Santé (droite aussi, en plus de celui sous le carré)
+        local hpCol = HealthColor(hpFrac)
         DrawBar(bx, by, bw, bh, hpFrac, hpCol)
         draw.SimpleText(math.max(0, math.Round(hp)) .. " HP", "SimpleHUD_Tiny", bx + 4, by + bh/2, color_white, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
         by = by + 14
@@ -200,12 +224,12 @@ if CLIENT then
         draw.SimpleText(math.Round(armor) .. " ARMURE", "SimpleHUD_Tiny", bx + 4, by + bh/2, color_white, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
         by = by + 14
 
-        -- Faim (DarkRP)
+        -- Faim
         local hungerCol = dispHunger > 40 and Color(249,115,22) or Color(239,68,68)
         DrawBar(bx, by, bw, bh, dispHunger / 100, hungerCol)
         draw.SimpleText(math.Round(dispHunger) .. "% FAIM", "SimpleHUD_Tiny", bx + 4, by + bh/2, color_white, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
 
-        -- Ammo bottom-right (garde l'ancien)
+        -- Ammo bottom-right
         local wep = ply:GetActiveWeapon()
         if IsValid(wep) then
             local clip = wep:Clip1()
